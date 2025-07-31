@@ -27,5 +27,7 @@ jobs:
         PASSWORD: ${{ secrets.PASSWORD }}
         GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
         GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+        STRAVA_API: ${{ secrets.STRAVA_API }}
+        STRAVA_JWT: ${{ secrets.STRAVA_JWT }}
       run: |
         python ActivitySync.py

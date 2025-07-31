@@ -8,13 +8,15 @@ from Crypto.Cipher import PKCS1_v1_5
 import garth
 import zipfile
 import hashlib
+from stravalib import Client
+from stravaweblib import WebClient, DataFormat
 
 def encrpt(password, public_key):
     rsa = RSA.importKey(public_key)
     cipher = PKCS1_v1_5.new(rsa)
     return base64.b64encode(cipher.encrypt(password.encode())).decode()
 
-def syncData(username, password, garmin_email = None, garmin_password = None):
+def syncData(username, password, garmin_email = None, garmin_password = None, strava_jwt = None, strava_api = None):
     headers = {
         'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
         "Accept-Encoding" : "gzip, deflate",
@@ -25,14 +27,16 @@ def syncData(username, password, garmin_email = None, garmin_password = None):
         igp_host = "i.igpsport.com"
 
     session = requests.session()
-    type = 1 #default igp
+    stype = 1 #default igp
 
     if garmin_password is not None and garmin_password != '':
-        type = 2 #garmin
+        stype = 2 #garmin
 
+    if strava_jwt is not None and strava_jwt != '':
+        stype = 3 #strava
 
     # login account
-    if type == 2:
+    if stype == 2:
         print("同步佳明数据")
 
         garth.configure(domain="garmin.cn")
@@ -41,6 +45,11 @@ def syncData(username, password, garmin_email = None, garmin_password = None):
             f"/activitylist-service/activities/search/activities",
             params={"activityType": "cycling", "limit": 10, "start": 0, 'excludeChildren': False},
         )
+    elif stype == 3:
+        strava_client_id, strava_client_secret, strava_refresh_token = strava_api.strip().split(",")
+        tokens = Client().refresh_access_token(strava_client_id, strava_client_secret, strava_refresh_token)
+        client = WebClient(access_token=tokens['access_token'], jwt=strava_jwt)
+        activities = client.get_activities(limit=10)
     else:
         print("同步IGP数据")
 
@@ -85,11 +94,13 @@ def syncData(username, password, garmin_email = None, garmin_password = None):
     timezone = ZoneInfo('Asia/Shanghai')  # to Shanghai timezero in Gtihub Action env
 
     for activity in activities:
-        if type == 2: #garmin
+        if stype == 2: #garmin
             dt        = datetime.strptime(activity["startTimeLocal"], "%Y-%m-%d %H:%M:%S")
             dt2       = datetime(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, tzinfo=timezone)
             s_time    = dt2.timestamp()
             mk_time   = int(s_time) * 1000
+        elif stype == 3: #strava
+            mk_time   = activity.start_date.timestamp() * 1000
         else:
             dt        = datetime.strptime(activity["StartTime"], "%Y-%m-%d %H:%M:%S")
             dt2       = datetime(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, tzinfo=timezone)
@@ -99,7 +110,7 @@ def syncData(username, password, garmin_email = None, garmin_password = None):
         need_sync = True
 
         for item in data:
-            if item["start_time"] == mk_time:
+            if abs(mk_time - item["start_time"]) < 100000:
                 need_sync = False
                 break
         if need_sync:
@@ -113,7 +124,7 @@ def syncData(username, password, garmin_email = None, garmin_password = None):
         #down file
         upload_url = "https://www.imxingzhe.com/api/v1/fit/upload/"
         for sync_item in sync_data:
-            if type == 2:  # garmin
+            if stype == 2:  # garmin
                 rid     = sync_item['activityId']
                 rid = str(rid)
                 print("sync rid:" + rid)
@@ -134,6 +145,19 @@ def syncData(username, password, garmin_email = None, garmin_password = None):
                         "sport": (None, 3, None),  # 骑行
                         "fit_file": (rid+"_ACTIVITY.fit", data, 'application/octet-stream')
                     })
+            if stype == 3:  # strava
+                data = client.get_activity_data(sync_item.id, fmt=DataFormat.ORIGINAL)
+                start_time = sync_item.start_date_local.strftime("%Y-%m-%d %H:%M:%S")
+                content = b''.join(data.content)
+                result = session.post(upload_url, files={
+                    "file_source": (None, "undefined", None),
+                    "fit_filename": (None, start_time+'.fit', None),
+                    "md5": (None, hashlib.md5(content).hexdigest(), None),
+                    "name": (None, 'STRAVA-'+start_time, None),
+                    "sport": (None, 3, None),  # 骑行
+                    "fit_file": (start_time+'.fit', content, 'application/octet-stream')
+                })
+                print("Updata STRAVA-"+start_time+": " + str(result.status_code))
             else:
                 rid     = sync_item["RideId"]
                 rid     = str(rid)
@@ -151,4 +175,4 @@ def syncData(username, password, garmin_email = None, garmin_password = None):
                     "fit_file": (sync_item["StartTime"]+'.fit', res.content, 'application/octet-stream')
                 })
 
-activity = syncData(os.getenv("USERNAME"), os.getenv("PASSWORD"), os.getenv("GARMIN_EMAIL"), os.getenv("GARMIN_PASSWORD"))
+activity = syncData(os.getenv("USERNAME"), os.getenv("PASSWORD"), os.getenv("GARMIN_EMAIL"), os.getenv("GARMIN_PASSWORD"), os.getenv("STRAVA_JWT"), os.getenv("STRAVA_API"))
