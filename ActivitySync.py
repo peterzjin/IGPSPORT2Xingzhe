@@ -10,6 +10,7 @@ import zipfile
 import hashlib
 from stravalib import Client
 from stravaweblib import WebClient, DataFormat
+import re
 
 def encrpt(password, public_key):
     rsa = RSA.importKey(public_key)
@@ -25,6 +26,8 @@ def syncData(username, password, garmin_email = None, garmin_password = None, st
     igp_host = "my.igpsport.com"
     if os.getenv("IGPSPORT_REGION") == "global":
         igp_host = "i.igpsport.com"
+        print("国际版暂时不支持")
+        return False
 
     session = requests.session()
     stype = 1 #default igp
@@ -32,7 +35,7 @@ def syncData(username, password, garmin_email = None, garmin_password = None, st
     if garmin_password is not None and garmin_password != '':
         stype = 2 #garmin
 
-    if strava_jwt is not None and strava_jwt != '':
+    if strava_jwt is not None and strava_jwt.strip() != '':
         stype = 3 #strava
 
     # login account
@@ -59,10 +62,19 @@ def syncData(username, password, garmin_email = None, garmin_password = None, st
             'password': password,
         }
         res = session.post(url, data, headers=headers)
-
+        setCookieValue = res.headers.get('Set-Cookie')
+        if(setCookieValue.find("loginTicket") == -1):
+            print("登录失败")
+            return False
+        loginToken = re.search(r'loginToken=(.*?);', setCookieValue).group(1)
+        if(loginToken == None):
+            print("登录失败")
+            return False
+        headers['Authorization'] = "Bearer %s" % loginToken
+        session.headers.update(headers)
         # get igpsport list
         url = "https://%s/Activity/ActivityList" % igp_host
-        res = session.get(url)
+        res = session.get(url, headers=headers)
         result = json.loads(res.text, strict=False)
 
         activities = result["item"]
@@ -145,7 +157,7 @@ def syncData(username, password, garmin_email = None, garmin_password = None, st
                         "sport": (None, 3, None),  # 骑行
                         "fit_file": (rid+"_ACTIVITY.fit", data, 'application/octet-stream')
                     })
-            if stype == 3:  # strava
+            elif stype == 3:  # strava
                 data = client.get_activity_data(sync_item.id, fmt=DataFormat.ORIGINAL)
                 start_time = sync_item.start_date_local.strftime("%Y-%m-%d %H:%M:%S")
                 content = b''.join(data.content)
@@ -163,9 +175,18 @@ def syncData(username, password, garmin_email = None, garmin_password = None, st
                 rid     = str(rid)
                 print("sync rid:" + rid)
 
-                fit_url = "https://%s/fit/activity?type=0&rideid=%s" % (igp_host, rid)
-                res     = session.get(fit_url)
 
+                fit_json = "https://prod.zh.igpsport.com/service/web-gateway/web-analyze/activity/getDownloadUrl/%s" % rid
+                res = session.get(fit_json)
+                json_result = json.loads(res.text, strict=False)
+                #判断是否存在fitUrl
+                if 'data' in json_result:
+                    fit_url = json_result['data']
+                else:
+                    print("data not found")
+                    continue
+                
+                res     = session.get(fit_url)
                 result = session.post(upload_url, files={
                     "file_source": (None, "undefined", None),
                     "fit_filename": (None, sync_item["StartTime"]+'.fit', None),
@@ -174,5 +195,7 @@ def syncData(username, password, garmin_email = None, garmin_password = None, st
                     "sport": (None, 3, None),  # 骑行
                     "fit_file": (sync_item["StartTime"]+'.fit', res.content, 'application/octet-stream')
                 })
+
+            print("sync result:" + result.text)
 
 activity = syncData(os.getenv("USERNAME"), os.getenv("PASSWORD"), os.getenv("GARMIN_EMAIL"), os.getenv("GARMIN_PASSWORD"), os.getenv("STRAVA_JWT"), os.getenv("STRAVA_API"))
