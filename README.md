@@ -1,6 +1,19 @@
 
 # IGPSPORT骑行记录同步行者(ActivitySync.py)
 
+# 新版同步脚本(IgpsportSync.py)
+
+旧的 `ActivitySync.py` 的 iGPSPORT 登录接口已失效，`IgpsportSync.py` 改用当前的 iGPSPORT 后端，把骑行记录同步到行者。
+
+用法（凭据读环境变量 `USERNAME` / `PASSWORD`）：
+
+```bash
+python3 IgpsportSync.py               # 同步最近 10 条
+python3 IgpsportSync.py --limit 20    # 指定处理条数
+python3 IgpsportSync.py --dry_run     # 仅列出待同步项，不下载不上传
+```
+
+依赖见 requirements.txt。仅覆盖 iGPSPORT→行者，佳明/Strava 渠道仍用 `ActivitySync.py`。
 
 # <b>佳明渠道已经无法进行使用</b>
 
